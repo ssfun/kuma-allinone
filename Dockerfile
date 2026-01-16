@@ -8,23 +8,30 @@ USER root
 ENV TZ=Asia/Shanghai
 RUN ln -snf /usr/share/zoneinfo/$TZ /etc/localtime && echo $TZ > /etc/timezone
 
+RUN apt-get update && apt-get install -y --no-install-recommends zip unzip \
+    && rm -rf /var/lib/apt/lists/*
+
 # 从其他镜像复制必要的二进制文件
+COPY --from=cloudflare/cloudflared:latest /usr/local/bin/cloudflared /usr/local/bin/cloudflared
 COPY --from=ghcr.io/sagernet/sing-box:latest /usr/local/bin/sing-box /usr/local/bin/sing-box
 COPY --from=ghcr.io/komari-monitor/komari-agent:latest /app/komari-agent /app/komari-agent
 
 # 设置工作目录
 WORKDIR /app
 
+# 1. 删除有漏洞的 healthcheck 二进制文件
+# 2. 预创建数据目录
+# 3. 统一授权给 10014 和 root 组 (GID 0)
+RUN rm -f /app/extra/healthcheck && \
+    chown -R 10014:0 /app && \
+    chmod -R 775 /app
+
 # 复制脚本并修改所有权
 COPY entrypoint.sh /app/entrypoint.sh
-# 确保新用户可以读取并执行脚本
-RUN chmod +x /app/entrypoint.sh && chown 10014:0 /app/entrypoint.sh
+RUN chmod +x /app/*.sh && chown 10014:0 /app/*.sh
 
-# 创建数据目录并统一授权给 10014
-RUN mkdir -p /app/data && \
-    touch /app/sing-box.log && \
-    chown -R 10014:0 /app && \
-    chmod -R g+w /app
+# 环境变量：确保 Kuma 知道数据存哪
+ENV DATA_DIR=/tmp/data/
 
 # 切换到特定的 UID
 USER 10014
