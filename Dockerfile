@@ -1,13 +1,24 @@
-# 1. 继续使用 main 镜像 (包含预置模型)
 FROM ghcr.io/open-webui/open-webui:main-slim
 
-# 2. 将 Open WebUI 的所有动态数据路径指向 /tmp
-# DATA_DIR 决定了 webui.db (数据库) 和 uploads (上传文件) 的位置
-ENV DATA_DIR=/tmp/data
+# Choreo 用户 ID
+ARG CHOREO_UID=10014
+ARG CHOREO_GID=10014
 
-# 同时修改 HOME 目录，防止某些 Python 工具试图写入 /root/.cache
+# --- 1. 核心路径重定向 (全部指向 /tmp) ---
+# 必须覆盖原镜像中写死的 /app/backend/data 路径，否则会因只读权限报错
+ENV DATA_DIR=/tmp/data
 ENV HOME=/tmp
 
-# 3. 切换到 Choreo 要求的非 root 用户
+# 覆盖 HuggingFace、SentenceTransformer 等模型的缓存路径
+ENV HF_HOME=/tmp/data/cache/embedding/models
+ENV SENTENCE_TRANSFORMERS_HOME=/tmp/data/cache/embedding/models
+ENV TIKTOKEN_CACHE_DIR=/tmp/data/cache/tiktoken
+ENV WHISPER_MODEL_DIR=/tmp/data/cache/whisper/models
+
+# --- 2. 切换用户 ---
 USER 10014
 
+# --- 3. 关键修复：运行时创建目录 ---
+# 我们修改 CMD，在启动应用前，先执行 mkdir -p /tmp/data
+# 这样能保证 SQLite 写入时目录一定存在
+CMD ["bash", "-c", "mkdir -p /tmp/data && exec bash start.sh"]
