@@ -97,7 +97,7 @@ fi
 # ==============================
 if [ -n "$CF_TOKEN" ]; then
     echo "Starting cloudflared..."
-    cloudflared --no-autoupdate tunnel run --token "$CF_TOKEN" &
+    cloudflared tunnel --no-autoupdate --protocol http2 --edge-ip-version 4 run --token "$TUNNEL_TOKEN" &
 else
     echo "Warning: CF_TOKEN is not set, skipping cloudflared"
 fi
