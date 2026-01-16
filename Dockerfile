@@ -1,19 +1,13 @@
-# 1. 使用 main 镜像（包含嵌入模型，启动更快，不用现场下载）
-FROM ghcr.io/open-webui/open-webui:main
+# 1. 继续使用 main 镜像 (包含预置模型)
+FROM ghcr.io/open-webui/open-webui:main-slim
 
-# 2. 重置 HOME 环境变量
-# Open WebUI 默认会尝试往 /root 写东西，必须改到我们有权限的目录下
-ENV HOME=/app/backend/data
+# 2. 将 Open WebUI 的所有动态数据路径指向 /tmp
+# DATA_DIR 决定了 webui.db (数据库) 和 uploads (上传文件) 的位置
+ENV DATA_DIR=/tmp/data
 
-# 3. 修正文件权限
-# 切换回 root 执行权限变更
-USER root
+# 同时修改 HOME 目录，防止某些 Python 工具试图写入 /root/.cache
+ENV HOME=/tmp
 
-# 确保数据目录存在，并把所有权给 Choreo 用户
-# /app/backend/data 是存放数据库(webui.db)和缓存的关键目录
-RUN mkdir -p /app/backend/data && \
-    chown -R 10014:10014 /app/backend/data && \
-    chmod -R 775 /app/backend/data
-
-# 4. 切换到 Choreo 的非 root 用户
+# 3. 切换到 Choreo 要求的非 root 用户
 USER 10014
+
