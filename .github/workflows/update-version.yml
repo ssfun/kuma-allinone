@@ -46,28 +46,39 @@ jobs:
 
           def send_telegram(token, chat_id, version, body):
               if not token or not chat_id:
-                  print('::warning::Telegram secrets not set, skipping notification.')
+                  print('::warning::Telegram secrets not set.')
                   return
               
-              # 1. HTML 转义：防止 <, >, & 等字符破坏 HTML 结构
+              # 1. HTML 全局转义：先把所有 < > & 等符号转义，防止破坏 HTML 结构
+              # 这一步会将 URL 中的 & 变成 &amp;，但浏览器和 Telegram 都能识别
               safe_body = html.escape(body)
 
-              # 2. 链接优化：将 Markdown 链接 [text](url) 转换为 HTML <a href='url'>text</a>
-              # 这样你在 Telegram 里能直接点击链接，而不是看到原本的长文本
-              body_with_links = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'<a href="\2">\1</a>', safe_body)
+              # 2. 链接转换逻辑 (关键修改)
+              # 使用 lambda 函数代替字符串引用，彻底解决 YAML 中的反斜杠转义问题
+              # 匹配逻辑：[任意非]字符](以http开头的链接)
+              pattern = r'\[([^\]]+)\]\((https?://[^)]+)\)'
+              
+              def link_replacer(match):
+                  text = match.group(1)
+                  url = match.group(2)
+                  return f'<a href=\"{url}\">{text}</a>'
 
-              # 3. 构建消息：使用 HTML 标签加粗标题
+              body_with_links = re.sub(pattern, link_replacer, safe_body)
+
+              # 3. 构建消息
               text_content = f'🚀 <b>Open WebUI Update Detected!</b>\n\n<b>New Version:</b> {version}\n\n{body_with_links}'
               
-              # 截断防止超长
+              # 4. 截断保护
               if len(text_content) > 4000:
                   text_content = text_content[:4000] + '\n...(content truncated)...'
 
               url = f'https://api.telegram.org/bot{token}/sendMessage'
+              
+              # 5. 配置 Payload
               payload = {
                   'chat_id': chat_id,
                   'text': text_content,
-                  'parse_mode': 'HTML',     # 关键修改：使用 HTML 模式
+                  'parse_mode': 'HTML',     # 必须是 HTML
                   'disable_web_page_preview': True
               }
               
@@ -78,15 +89,16 @@ jobs:
                   urllib.request.urlopen(req)
                   print(f'-> Telegram notification sent to {chat_id}')
               except Exception as e:
-                  print(f'::error::Failed to send Telegram: {e}')
-                  # 如果还是失败（极少情况），尝试纯文本兜底
+                  print(f'::error::HTML Send Failed: {e}')
+                  # 只有当 HTML 解析彻底失败时，才降级为纯文本
                   del payload['parse_mode']
+                  # 纯文本模式下，还原原始 body (不需要 html 转义的版本)
                   payload['text'] = f'Open WebUI Update: {version}\n\n{body}'
                   try:
                       urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers))
                       print('-> Sent as plain text fallback.')
-                  except:
-                      pass
+                  except Exception as e2:
+                      print(f'::error::Fallback failed: {e2}')
 
           try:
               # 1. 检查文件
@@ -120,20 +132,21 @@ jobs:
               if get_semver(remote_ver) > get_semver(local_ver):
                   print(f'-> New version found! Updating...')
 
-                  # 替换版本号
+                  # 更新 README - Version
                   content = re.sub(r'(# Version\s+)(v[\d\.]+)', f'\\g<1>{remote_ver}', content, count=1)
-                  # 替换 Release Note
+                  # 更新 README - Releases
+                  # 这里要小心：写入 README 的应该是原始 Markdown (remote_body)，而不是转义后的 HTML
                   content = re.sub(r'(# Releases\s*)([\s\S]*)', f'# Releases\n\n{remote_body}', content, count=1)
 
                   with open(file_path, 'w', encoding='utf-8') as f:
                       f.write(content)
                   
-                  # 输出状态
+                  # 输出 Output
                   with open(os.environ['GITHUB_OUTPUT'], 'a') as gh_out:
                       gh_out.write('updated=true\n')
                       gh_out.write(f'new_version={remote_ver}\n')
                   
-                  # 5. 发送通知
+                  # 发送通知 (传入原始 body，函数内会处理转义)
                   send_telegram(
                       os.environ.get('TELEGRAM_TOKEN'), 
                       os.environ.get('TELEGRAM_TO'), 
