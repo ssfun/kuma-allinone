@@ -1,0 +1,116 @@
+name: Auto Update Open-WebUI Version
+
+on:
+  schedule:
+    # 每天检查一次 (此处为 UTC 时间 00:00，即北京时间 08:00)
+    - cron: '0 0 * * *'
+  workflow_dispatch: # 允许手动点击按钮触发
+
+permissions:
+  contents: write # 必须赋予写入权限以便提交更改
+
+jobs:
+  check-and-update:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.x'
+
+      - name: Check and Update README
+        id: update_script
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          python -c "
+          import re
+          import json
+          import os
+          import urllib.request
+          import sys
+
+          # --- 配置区域 ---
+          file_path = 'README.md'
+          api_url = 'https://api.github.com/repos/open-webui/open-webui/releases/latest'
+
+          def get_semver(ver_str):
+              # 移除 'v' 前缀并按 '.' 分割，例如 v0.7.2 -> [0, 7, 2]
+              clean_ver = ver_str.lstrip('v')
+              return [int(x) for x in clean_ver.split('.') if x.isdigit()]
+
+          try:
+              print('-> Reading local README...')
+              if not os.path.exists(file_path):
+                  print('::error::README.md not found!')
+                  sys.exit(1)
+
+              with open(file_path, 'r', encoding='utf-8') as f:
+                  content = f.read()
+
+              # 1. 获取本地版本号
+              # 匹配逻辑：找到 '# Version'，跳过空白字符，捕获 'v' 开头的版本号
+              ver_match = re.search(r'# Version\s+(v[\d\.]+)', content)
+              if not ver_match:
+                  print('::warning::Cannot find current version in README format.')
+                  sys.exit(0)
+              
+              local_ver = ver_match.group(1)
+              print(f'   Local Version: {local_ver}')
+
+              # 2. 获取远程最新版本
+              print('-> Fetching latest release from GitHub API...')
+              req = urllib.request.Request(api_url)
+              if os.environ.get('GITHUB_TOKEN'):
+                  req.add_header('Authorization', f'token {os.environ.get('GITHUB_TOKEN')}')
+              
+              with urllib.request.urlopen(req) as response:
+                  data = json.loads(response.read().decode())
+                  remote_ver = data['tag_name']
+                  remote_body = data['body']
+              
+              print(f'   Remote Version: {remote_ver}')
+
+              # 3. 对比版本
+              if get_semver(remote_ver) > get_semver(local_ver):
+                  print(f'-> New version found! Updating from {local_ver} to {remote_ver}...')
+
+                  # 4. 执行替换
+                  
+                  # 替换 A: 更新版本号区域
+                  # 正则解释：(?<=# Version\s\s) 是为了保留标题，但更简单的做法是替换整个块或使用 group
+                  # 这里我们查找 '# Version' 后面的那个版本字符串进行替换
+                  content = re.sub(r'(# Version\s+)(v[\d\.]+)', f'\\g<1>{remote_ver}', content, count=1)
+
+                  # 替换 B: 更新 Releases 区域
+                  # 正则解释：找到 '# Releases'，然后匹配其后直到文件结束的所有内容 ([\s\S]*)
+                  # 将其替换为 '# Releases' 加上 两个换行符 和 新的 body
+                  content = re.sub(r'(# Releases\s*)([\s\S]*)', f'# Releases\n\n{remote_body}', content, count=1)
+
+                  # 写入文件
+                  with open(file_path, 'w', encoding='utf-8') as f:
+                      f.write(content)
+                  
+                  # 输出变量供下一步使用
+                  with open(os.environ['GITHUB_OUTPUT'], 'a') as gh_out:
+                      gh_out.write('updated=true\n')
+                      gh_out.write(f'new_version={remote_ver}\n')
+              else:
+                  print('-> Local version is up to date.')
+                  
+          except Exception as e:
+              print(f'::error::Script execution failed: {e}')
+              sys.exit(1)
+          "
+
+      - name: Commit and Push changes
+        if: steps.update_script.outputs.updated == 'true'
+        run: |
+          git config --global user.name "github-actions[bot]"
+          git config --global user.email "github-actions[bot]@users.noreply.github.com"
+          git add README.md
+          git commit -m "docs: update to ${{ steps.update_script.outputs.new_version }}"
+          git push
