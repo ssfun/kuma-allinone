@@ -34,6 +34,7 @@ jobs:
           import os
           import urllib.request
           import sys
+          import html
 
           # --- 配置 ---
           file_path = 'README.md'
@@ -48,12 +49,17 @@ jobs:
                   print('::warning::Telegram secrets not set, skipping notification.')
                   return
               
-              # 构建消息内容
-              # 为了避免 Markdown 解析错误（GitHub的Markdown和Telegram的不完全兼容），
-              # 这里的策略是：只有标题加粗，正文保持原样，禁用网页预览
-              text_content = f'🚀 *Open WebUI Update Detected!* \n\n*New Version:* {version}\n\n{body}'
+              # 1. HTML 转义：防止 <, >, & 等字符破坏 HTML 结构
+              safe_body = html.escape(body)
+
+              # 2. 链接优化：将 Markdown 链接 [text](url) 转换为 HTML <a href='url'>text</a>
+              # 这样你在 Telegram 里能直接点击链接，而不是看到原本的长文本
+              body_with_links = re.sub(r'\[([^\]]+)\]\((https?://[^)]+)\)', r'<a href="\2">\1</a>', safe_body)
+
+              # 3. 构建消息：使用 HTML 标签加粗标题
+              text_content = f'🚀 <b>Open WebUI Update Detected!</b>\n\n<b>New Version:</b> {version}\n\n{body_with_links}'
               
-              # 截断过长的消息 (Telegram 限制 4096 字符)
+              # 截断防止超长
               if len(text_content) > 4000:
                   text_content = text_content[:4000] + '\n...(content truncated)...'
 
@@ -61,7 +67,7 @@ jobs:
               payload = {
                   'chat_id': chat_id,
                   'text': text_content,
-                  'parse_mode': 'Markdown', # 尝试使用 Markdown 渲染
+                  'parse_mode': 'HTML',     # 关键修改：使用 HTML 模式
                   'disable_web_page_preview': True
               }
               
@@ -72,15 +78,15 @@ jobs:
                   urllib.request.urlopen(req)
                   print(f'-> Telegram notification sent to {chat_id}')
               except Exception as e:
-                  # 如果 Markdown 发送失败（通常是因为正文包含特殊字符），尝试作为纯文本重发
-                  print(f'::warning::Markdown send failed ({e}), retrying as plain text...')
+                  print(f'::error::Failed to send Telegram: {e}')
+                  # 如果还是失败（极少情况），尝试纯文本兜底
                   del payload['parse_mode']
-                  req = urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers)
+                  payload['text'] = f'Open WebUI Update: {version}\n\n{body}'
                   try:
-                      urllib.request.urlopen(req)
-                      print(f'-> Telegram notification sent (Plain Text).')
-                  except Exception as e2:
-                      print(f'::error::Failed to send Telegram: {e2}')
+                      urllib.request.urlopen(urllib.request.Request(url, data=json.dumps(payload).encode(), headers=headers))
+                      print('-> Sent as plain text fallback.')
+                  except:
+                      pass
 
           try:
               # 1. 检查文件
@@ -122,7 +128,7 @@ jobs:
                   with open(file_path, 'w', encoding='utf-8') as f:
                       f.write(content)
                   
-                  # 输出状态供 Git 步骤使用
+                  # 输出状态
                   with open(os.environ['GITHUB_OUTPUT'], 'a') as gh_out:
                       gh_out.write('updated=true\n')
                       gh_out.write(f'new_version={remote_ver}\n')
