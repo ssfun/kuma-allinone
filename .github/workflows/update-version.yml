@@ -66,7 +66,7 @@ jobs:
               body_with_links = re.sub(pattern, link_replacer, safe_body)
 
               # 3. 构建消息
-              text_content = f'🚀 <b>Open WebUI Update Detected!</b>\n\n<b>New Version:</b> {version}\n\n{body_with_links}'
+              text_content = f'🚀 <b>Open WebUI (Choreo) Update Detected!</b>\n\n<b>New Version:</b> {version}\n\n{body_with_links}'
               
               # 4. 截断保护
               if len(text_content) > 4000:
